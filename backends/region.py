@@ -90,20 +90,29 @@ class Region:
 
     # EDG says: Blobs now have segments, and SimOS will get upset if these don't exist.  See simos.py line 107 for
     # some code you should probably fix if you don't like it.
+    @property
     def is_readable(self):
         # pylint: disable=no-self-use
         return True
 
+    @property
     def is_writable(self):
         # pylint: disable=no-self-use
         return True
 
+    @property
     def is_executable(self):
         # pylint: disable=no-self-use
         return True
 
 class Segment(Region):
     pass
+
+class ROSegment(Region):
+    @property
+    def is_writable(self):
+        # pylint: disable=no-self-use
+        return False
 
 
 class EmptySegment(Segment):

@@ -2,6 +2,7 @@ from . import Backend, register_backend
 from ..errors import CLEError
 from ..patched_stream import PatchedStream
 from .region import Segment
+from .region import ROSegment
 import logging
 l = logging.getLogger("cle.blob")
 
@@ -132,3 +133,111 @@ class Blob(Backend):
 
 
 register_backend("blob", Blob)
+
+
+
+class ElioticBlob(Backend):
+    """
+    A binary blob that is not writable below a given address.
+    This is useful for compatibility with Eliot Miranda's CogProcessorAlien.
+    """
+
+    def __init__(self, path, minReadAddress=0, minWriteAddress=0, **kwargs):
+        """
+        The comment in #primitiveRunInMemory:minimumAddress:readOnlyBelow:  says:
+        Run the receiver using the argument as the store.
+        Origin the argument at 0. i.e. the first byte of the memoryArray is address 0.
+        Make addresses below minimumAddress illegal.
+        Convert out-of-range calls, jumps and memory read/writes into ProcessorSimulationTrap signals.
+        """
+        super(ElioticBlob, self).__init__(path, **kwargs)
+        if self.arch is None:
+            raise CLEError("Must specify arch when loading blob!")
+
+        if self._custom_entry_point is None:
+            l.warning("No entry_point was specified for blob %s, assuming 0", path)
+            self._custom_entry_point = 0
+
+        self._entry = self._custom_entry_point
+        self.linked_base = minReadAddress
+        self.mapped_base = self.linked_base
+
+        self.os = 'unknown'
+
+        self.binary_stream.seek(0, 2)
+        total_size = self.binary_stream.tell()
+        self._max_addr = total_size
+        self._min_addr = minReadAddress
+        if minReadAddress==minWriteAddress:
+            self._load(minReadAddress, total_size, Segment)
+        else:
+            self._load(minReadAddress, minWriteAddress - minReadAddress, ROSegment)
+            self._load(minWriteAddress, total_size - minWriteAddress, Segment)
+
+    def _load(self, start, size, segmentType):
+        """
+        Load a segment into memory.
+        """
+        self.binary_stream.seek(start)
+        string = self.binary_stream.read(size)
+        self.memory.add_backer(start, string)
+        seg = segmentType(start, start, size, size)
+        self.segments.append(seg)
+
+    @staticmethod
+    def is_compatible(stream):
+        return stream == 0  # I hate pylint
+
+    @property
+    def min_addr(self):
+        return self._min_addr
+
+    @property
+    def max_addr(self):
+        return self._max_addr
+
+    def function_name(self, addr): #pylint: disable=unused-argument,no-self-use
+        """
+        Blobs don't support function names.
+        """
+        return None
+
+    def contains_addr(self, addr):
+        return addr >= self._min_addr and addr <= _max_addr
+
+    def in_which_segment(self, addr): #pylint: disable=unused-argument,no-self-use
+        """
+        Blobs don't support segments.
+        """
+        return None
+
+    @classmethod
+    def check_compatibility(cls, spec, obj): # pylint: disable=unused-argument
+        return True
+
+    def __getstate__(self):
+        if self.binary is None:
+            raise ValueError("Can't pickle an object loaded from a stream")
+
+        # Get a copy of our pickleable self
+        state = dict(self.__dict__)
+
+        # Trash the unpickleable
+        if type(self.binary_stream) is PatchedStream:
+            state['binary_stream'].stream = None
+        else:
+            state['binary_stream'] = None
+
+        return state
+
+    def __setstate__(self, data):
+
+        self.__dict__.update(data)
+
+        if self.binary_stream is None:
+            self.binary_stream = open(self.binary, 'rb')
+        else:
+            self.binary_stream.stream = open(self.binary, 'rb')
+
+
+register_backend("eliot", ElioticBlob)
